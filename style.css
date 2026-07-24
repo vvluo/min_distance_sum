@@ -300,6 +300,13 @@ button.small {
   margin-top: 2px;
 }
 
+.lobby-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .player-pill {
   display: inline-flex;
   align-items: center;

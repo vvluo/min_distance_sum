@@ -167,7 +167,8 @@ function buildView(forSlot) {
     round: room.round,
     totalRounds: TOTAL_ROUNDS,
     mySlot: forSlot,
-    players: room.slots.map((s) => (s ? { name: s.name, connected: s.connected, lobbyReady: s.lobbyReady } : null)),
+    players: room.slots.map((s) => (s ? { name: s.name, connected: s.connected, lobbyReady: s.lobbyReady, isBot: !!s.isBot } : null)),
+    botCount: room.slots.filter((s) => s && s.isBot).length,
     totals: room.totals.slice(),
     usedOwnKeys: room.usedOwnKeys.map((set) => [...set]),
     usedMasterKeys: [...room.usedMasterKeys],
@@ -212,6 +213,27 @@ function actionToggleReady(participant) {
   participant.lobbyReady = !participant.lobbyReady;
   if (room.slots.every((s) => s && s.lobbyReady)) room.phase = "picking";
   broadcastState();
+  maybeRunBots();
+}
+
+function actionAddBot(participant, targetSlot) {
+  if (room.phase !== "lobby") return;
+  if (targetSlot < 0 || targetSlot > 3 || room.slots[targetSlot]) return;
+  const botCount = room.slots.filter((s) => s && s.isBot).length;
+  if (botCount >= 3) return; // at least one seat has to stay open for a human
+  room.slots[targetSlot] = {
+    sessionId: "bot-" + targetSlot + "-" + genSessionId(),
+    name: "Bot", conn: null, connected: true, lobbyReady: true, isBot: true,
+  };
+  broadcastState();
+}
+
+function actionRemoveBot(participant, targetSlot) {
+  if (room.phase !== "lobby") return;
+  const s = room.slots[targetSlot];
+  if (!s || !s.isBot) return;
+  room.slots[targetSlot] = null;
+  broadcastState();
 }
 
 function actionPick(participant, x, y) {
@@ -226,6 +248,50 @@ function actionPick(participant, x, y) {
   room.lockedIn[slot] = true;
   if (room.lockedIn.every(Boolean)) room.phase = "revealReady";
   broadcastState();
+  maybeRunBots();
+}
+
+// ---- Bots: simulated purely on the host, no connection of their own -------
+
+function randomAvailableVertex(slot) {
+  const player = PLAYERS[slot];
+  const available = [];
+  for (let x = player.qx[0]; x <= player.qx[1]; x++) {
+    for (let y = player.qy[0]; y <= player.qy[1]; y++) {
+      if (!room.usedOwnKeys[slot].has(key(x, y))) available.push([x, y]);
+    }
+  }
+  return available[Math.floor(Math.random() * available.length)];
+}
+
+function maybeRunBots() {
+  if (!room) return;
+  if (room.phase === "picking") {
+    room.slots.forEach((s, slot) => {
+      if (!s || !s.isBot || room.lockedIn[slot]) return;
+      setTimeout(() => {
+        if (!room || room.phase !== "picking" || room.lockedIn[slot] || room.slots[slot] !== s) return;
+        const [x, y] = randomAvailableVertex(slot);
+        actionPick(s, x, y);
+      }, 300 + Math.random() * 900);
+    });
+  } else if (room.phase === "revealReady") {
+    room.slots.forEach((s, slot) => {
+      if (!s || !s.isBot || room.readyReveal[slot]) return;
+      setTimeout(() => {
+        if (!room || room.phase !== "revealReady" || room.readyReveal[slot] || room.slots[slot] !== s) return;
+        actionReadyReveal(s);
+      }, 200 + Math.random() * 500);
+    });
+  } else if (room.phase === "reveal") {
+    room.slots.forEach((s, slot) => {
+      if (!s || !s.isBot || room.readyContinue[slot]) return;
+      setTimeout(() => {
+        if (!room || room.phase !== "reveal" || room.readyContinue[slot] || room.slots[slot] !== s) return;
+        actionReadyContinue(s);
+      }, 200 + Math.random() * 500);
+    });
+  }
 }
 
 function doReveal() {
@@ -249,6 +315,7 @@ function actionReadyReveal(participant) {
   room.readyReveal[slot] = true;
   if (room.readyReveal.every(Boolean)) doReveal();
   broadcastState();
+  maybeRunBots();
 }
 
 function advanceRound() {
@@ -269,12 +336,15 @@ function actionReadyContinue(participant) {
   room.readyContinue[slot] = true;
   if (room.readyContinue.every(Boolean)) advanceRound();
   broadcastState();
+  maybeRunBots();
 }
 
 function dispatchAction(participant, msg) {
   switch (msg.t) {
     case "chooseSlot": return actionChooseSlot(participant, msg.slot);
     case "toggleReady": return actionToggleReady(participant);
+    case "addBot": return actionAddBot(participant, msg.slot);
+    case "removeBot": return actionRemoveBot(participant, msg.slot);
     case "pick": return actionPick(participant, msg.x, msg.y);
     case "readyReveal": return actionReadyReveal(participant);
     case "readyContinue": return actionReadyContinue(participant);
@@ -460,7 +530,7 @@ function renderPreGame() {
 
 function renderLanding() {
   stage.appendChild(el("div", { class: "stage-title", text: "Play with friends" }));
-  stage.appendChild(el("div", { class: "stage-sub", text: "One player hosts and shares a link or code; the other 3 join from their own devices on the same network." }));
+  stage.appendChild(el("div", { class: "stage-sub", text: "One player hosts and shares a link or code; up to 3 more join from their own devices. Fill any empty seats with bots to play solo or in a smaller group." }));
   const row = el("div", { class: "landing-actions" });
   const hostBtn = el("button", { text: "Host a Game" });
   hostBtn.addEventListener("click", () => { uiPhase = "hostForm"; render(); });
@@ -585,15 +655,28 @@ function renderLobby() {
     const label = el("div", { class: "lobby-slot-label" }, [dot, document.createTextNode(" " + p.name)]);
     card.appendChild(label);
     if (occ) {
-      card.appendChild(el("div", { class: "lobby-slot-name", text: occ.name + (occ.connected ? "" : " (disconnected)") }));
-      card.appendChild(el("div", { class: "lobby-slot-ready", text: occ.lobbyReady ? "Ready" : "Not ready" }));
+      const nameText = occ.isBot ? "\u{1F916} Bot" : occ.name + (occ.connected ? "" : " (disconnected)");
+      card.appendChild(el("div", { class: "lobby-slot-name", text: nameText }));
+      card.appendChild(el("div", { class: "lobby-slot-ready", text: occ.isBot ? "Ready" : (occ.lobbyReady ? "Ready" : "Not ready") }));
+      if (occ.isBot) {
+        const removeBtn = el("button", { text: "Remove Bot", class: "secondary small" });
+        removeBtn.addEventListener("click", () => sendAction({ t: "removeBot", slot: i }));
+        card.appendChild(removeBtn);
+      }
     } else {
       card.appendChild(el("div", { class: "lobby-slot-name", text: "Open" }));
+      const btnRow = el("div", { class: "lobby-slot-actions" });
       if (v.mySlot != null && v.players[v.mySlot] && !v.players[v.mySlot].lobbyReady) {
         const moveBtn = el("button", { text: "Play as " + p.name, class: "secondary small" });
         moveBtn.addEventListener("click", () => sendAction({ t: "chooseSlot", slot: i }));
-        card.appendChild(moveBtn);
+        btnRow.appendChild(moveBtn);
       }
+      if (v.botCount < 3) {
+        const botBtn = el("button", { text: "Add Bot", class: "secondary small" });
+        botBtn.addEventListener("click", () => sendAction({ t: "addBot", slot: i }));
+        btnRow.appendChild(botBtn);
+      }
+      card.appendChild(btnRow);
     }
     slotsWrap.appendChild(card);
   });
@@ -601,7 +684,8 @@ function renderLobby() {
 
   const readyCount = v.players.filter((p) => p && p.lobbyReady).length;
   const filledCount = v.players.filter(Boolean).length;
-  stage.appendChild(el("div", { class: "stage-sub", text: `${filledCount}/4 joined • ${readyCount}/4 ready` }));
+  const humanCount = v.players.filter((p) => p && !p.isBot).length;
+  stage.appendChild(el("div", { class: "stage-sub", text: `${filledCount}/4 seats filled • ${readyCount}/4 ready • ${humanCount} human player(s), ${v.botCount} bot(s)` }));
 
   const me = v.mySlot != null ? v.players[v.mySlot] : null;
   const readyBtn = el("button", { text: me && me.lobbyReady ? "Not Ready" : "Ready" });
