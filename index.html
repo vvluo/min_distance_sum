@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Min Distance Sum</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Min Distance Sum</h1>
+      <p class="subtitle">4 players &middot; 9 rounds &middot; lowest total wins</p>
+    </header>
+
+    <div class="layout">
+      <div class="board-card">
+        <div id="stage"></div>
+      </div>
+
+      <aside class="sidebar">
+        <div class="panel" id="scoreboard">
+          <h2>Scoreboard</h2>
+          <div id="round-indicator">Round — / 9</div>
+          <table id="score-table">
+            <thead>
+              <tr><th>Player</th><th>Total</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="rules-panel">
+          <h2>Rules</h2>
+          <ul id="rules-list">
+            <li data-example="own">Each player has 9 vertices (the 3&times;3 interior corners of their quadrant) and plays exactly one per round.</li>
+            <li data-example="master">Each round a <strong>master vertex</strong> is drawn at random (without replacement) from the 49 interior corners of the whole board, and is visible to everyone before they pick.</li>
+            <li data-example="scoring">Your score for the round is the <strong>smallest distance</strong> from your vertex to any of the other 4 vertices in play (3 opponents + master).</li>
+            <li>Picks are hidden until everyone is ready, then revealed together.</li>
+            <li>Lowest sum over all 9 rounds wins.</li>
+          </ul>
+          <div id="rules-example">
+            <div class="rules-example-hint">Hover a rule above to see an example</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
