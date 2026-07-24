@@ -78,20 +78,23 @@ function boardBase(cell, idAttr) {
 }
 
 // picks: array(4) of [x,y]|null (only what the viewer is allowed to see); masterVertex: [x,y]|null
-function buildBoard({ mySlot, usedOwnKeys, usedMasterKeys, picks, masterVertex, onPick }) {
+function buildBoard({ mySlot, usedOwnKeys, picks, masterVertex, onPick }) {
   const svg = boardBase(CELL, "board");
   const activePlayer = mySlot != null ? PLAYERS[mySlot] : null;
   const inRegion = (p, x, y) => x >= p.qx[0] && x <= p.qx[1] && y >= p.qy[0] && y <= p.qy[1];
 
+  // Only a player's own past picks gray out / block a vertex — a vertex that
+  // merely happened to be the master in some earlier round is not "used" by
+  // anyone and must stay pickable (master draws are already without
+  // replacement via the pre-shuffled sequence, independent of this).
   const usedSet = new Set();
   (usedOwnKeys || []).forEach((arr) => arr.forEach((k) => usedSet.add(k)));
-  const masterUsedSet = new Set(usedMasterKeys || []);
 
   for (let x = 1; x <= 7; x++) {
     for (let y = 1; y <= 7; y++) {
       const k = key(x, y);
       const px = x * CELL, py = y * CELL;
-      const usedHere = usedSet.has(k) || masterUsedSet.has(k);
+      const usedHere = usedSet.has(k);
 
       let clickable = false, fill = "rgba(255,255,255,0.9)", stroke = "rgba(0,0,0,0.15)", r = 4;
       if (usedHere) { fill = "rgba(90,90,95,0.55)"; stroke = "rgba(90,90,95,0.7)"; }
@@ -105,15 +108,18 @@ function buildBoard({ mySlot, usedOwnKeys, usedMasterKeys, picks, masterVertex, 
     }
   }
 
+  // Overlay markers are display-only — pointer-events:none lets a click on a
+  // vertex that coincides with the master (or, at reveal, another pick)
+  // still reach the actual clickable circle underneath instead of the marker.
   if (picks) {
     picks.forEach((pt, pid) => {
       if (!pt) return;
       const p = PLAYERS[pid];
-      svg.appendChild(svgEl("circle", { cx: pt[0] * CELL, cy: pt[1] * CELL, r: 9, fill: p.solid, stroke: "white", "stroke-width": 2 }));
+      svg.appendChild(svgEl("circle", { cx: pt[0] * CELL, cy: pt[1] * CELL, r: 9, fill: p.solid, stroke: "white", "stroke-width": 2, "pointer-events": "none" }));
     });
   }
   if (masterVertex) {
-    svg.appendChild(svgEl("circle", { cx: masterVertex[0] * CELL, cy: masterVertex[1] * CELL, r: 10, fill: "black", stroke: "white", "stroke-width": 2 }));
+    svg.appendChild(svgEl("circle", { cx: masterVertex[0] * CELL, cy: masterVertex[1] * CELL, r: 10, fill: "black", stroke: "white", "stroke-width": 2, "pointer-events": "none" }));
   }
   return svg;
 }
@@ -148,7 +154,6 @@ function createRoom(code) {
     round: 1,
     masterSequence: shuffled(masterPoolAll()),
     usedOwnKeys: [new Set(), new Set(), new Set(), new Set()],
-    usedMasterKeys: new Set(),
     totals: [0, 0, 0, 0],
     history: [],
     currentPicks: [null, null, null, null],
@@ -171,7 +176,6 @@ function buildView(forSlot) {
     botCount: room.slots.filter((s) => s && s.isBot).length,
     totals: room.totals.slice(),
     usedOwnKeys: room.usedOwnKeys.map((set) => [...set]),
-    usedMasterKeys: [...room.usedMasterKeys],
     masterVertex: showMaster ? master : null,
     lockedIn: room.lockedIn.slice(),
     readyReveal: room.readyReveal.slice(),
@@ -302,7 +306,6 @@ function doReveal() {
     return round6(Math.min(...others.map((o) => dist(pt, o))));
   });
   scores.forEach((s, i) => (room.totals[i] += s));
-  room.usedMasterKeys.add(key(...master));
   room.history.push({ round: room.round, master, picks: picks.slice(), scores });
   room.phase = "reveal";
   room.readyReveal = [false, false, false, false];
@@ -715,7 +718,6 @@ function renderPicking() {
   stage.appendChild(buildBoard({
     mySlot: v.mySlot,
     usedOwnKeys: v.usedOwnKeys,
-    usedMasterKeys: v.usedMasterKeys,
     masterVertex: v.masterVertex,
     picks: picksDisplay,
     onPick: iLockedIn ? null : (x, y) => sendAction({ t: "pick", x, y }),
