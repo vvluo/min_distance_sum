@@ -220,14 +220,18 @@ function actionToggleReady(participant) {
   maybeRunBots();
 }
 
-function actionAddBot(participant, targetSlot) {
+const BOT_DIFFICULTIES = ["easy", "medium"];
+
+function actionAddBot(participant, targetSlot, difficulty) {
   if (room.phase !== "lobby") return;
   if (targetSlot < 0 || targetSlot > 3 || room.slots[targetSlot]) return;
   const botCount = room.slots.filter((s) => s && s.isBot).length;
   if (botCount >= 3) return; // at least one seat has to stay open for a human
+  const diff = BOT_DIFFICULTIES.includes(difficulty) ? difficulty : "easy";
   room.slots[targetSlot] = {
     sessionId: "bot-" + targetSlot + "-" + genSessionId(),
-    name: "Bot", conn: null, connected: true, lobbyReady: true, isBot: true,
+    name: diff === "medium" ? "Bot (Medium)" : "Bot (Easy)",
+    conn: null, connected: true, lobbyReady: true, isBot: true, difficulty: diff,
   };
   broadcastState();
 }
@@ -257,7 +261,7 @@ function actionPick(participant, x, y) {
 
 // ---- Bots: simulated purely on the host, no connection of their own -------
 
-function randomAvailableVertex(slot) {
+function availableVertices(slot) {
   const player = PLAYERS[slot];
   const available = [];
   for (let x = player.qx[0]; x <= player.qx[1]; x++) {
@@ -265,7 +269,35 @@ function randomAvailableVertex(slot) {
       if (!room.usedOwnKeys[slot].has(key(x, y))) available.push([x, y]);
     }
   }
+  return available;
+}
+
+function randomAvailableVertex(slot) {
+  const available = availableVertices(slot);
   return available[Math.floor(Math.random() * available.length)];
+}
+
+// Medium bot: always plays whichever of its own remaining vertices is
+// closest to the master vertex. Ties go to whichever of those is furthest
+// from the board's center (0,0); if that's still tied, pick randomly.
+function mediumBotVertex(slot) {
+  const available = availableVertices(slot);
+  const master = room.masterSequence[room.round - 1];
+  const distToOrigin = (v) => Math.hypot(...disp(v[0], v[1]));
+
+  let best = round6(Math.min(...available.map((v) => dist(v, master))));
+  let candidates = available.filter((v) => round6(dist(v, master)) === best);
+
+  if (candidates.length > 1) {
+    const farthest = round6(Math.max(...candidates.map(distToOrigin)));
+    candidates = candidates.filter((v) => round6(distToOrigin(v)) === farthest);
+  }
+
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function botVertexFor(s, slot) {
+  return s.difficulty === "medium" ? mediumBotVertex(slot) : randomAvailableVertex(slot);
 }
 
 function maybeRunBots() {
@@ -275,7 +307,7 @@ function maybeRunBots() {
       if (!s || !s.isBot || room.lockedIn[slot]) return;
       setTimeout(() => {
         if (!room || room.phase !== "picking" || room.lockedIn[slot] || room.slots[slot] !== s) return;
-        const [x, y] = randomAvailableVertex(slot);
+        const [x, y] = botVertexFor(s, slot);
         actionPick(s, x, y);
       }, 300 + Math.random() * 900);
     });
@@ -381,7 +413,7 @@ function dispatchAction(participant, msg) {
   switch (msg.t) {
     case "chooseSlot": return actionChooseSlot(participant, msg.slot);
     case "toggleReady": return actionToggleReady(participant);
-    case "addBot": return actionAddBot(participant, msg.slot);
+    case "addBot": return actionAddBot(participant, msg.slot, msg.difficulty);
     case "removeBot": return actionRemoveBot(participant, msg.slot);
     case "pick": return actionPick(participant, msg.x, msg.y);
     case "readyReveal": return actionReadyReveal(participant);
@@ -693,7 +725,7 @@ function renderLobby() {
     const label = el("div", { class: "lobby-slot-label" }, [dot, document.createTextNode(" " + p.name)]);
     card.appendChild(label);
     if (occ) {
-      const nameText = occ.isBot ? "\u{1F916} Bot" : occ.name + (occ.connected ? "" : " (disconnected)");
+      const nameText = occ.isBot ? "\u{1F916} " + occ.name : occ.name + (occ.connected ? "" : " (disconnected)");
       card.appendChild(el("div", { class: "lobby-slot-name", text: nameText }));
       card.appendChild(el("div", { class: "lobby-slot-ready", text: occ.isBot ? "Ready" : (occ.lobbyReady ? "Ready" : "Not ready") }));
       if (occ.isBot) {
@@ -710,9 +742,12 @@ function renderLobby() {
         btnRow.appendChild(moveBtn);
       }
       if (v.botCount < 3) {
-        const botBtn = el("button", { text: "Add Bot", class: "secondary small" });
-        botBtn.addEventListener("click", () => sendAction({ t: "addBot", slot: i }));
-        btnRow.appendChild(botBtn);
+        const easyBtn = el("button", { text: "+ Easy Bot", class: "secondary small" });
+        easyBtn.addEventListener("click", () => sendAction({ t: "addBot", slot: i, difficulty: "easy" }));
+        btnRow.appendChild(easyBtn);
+        const mediumBtn = el("button", { text: "+ Medium Bot", class: "secondary small" });
+        mediumBtn.addEventListener("click", () => sendAction({ t: "addBot", slot: i, difficulty: "medium" }));
+        btnRow.appendChild(mediumBtn);
       }
       card.appendChild(btnRow);
     }

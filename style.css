@@ -55,7 +55,13 @@ body {
   border-radius: 12px;
   box-shadow: 0 4px 18px rgba(0,0,0,0.06);
   padding: 24px;
-  flex: 0 0 auto;
+  /* Targets the board's own width (448px + this padding) so screens without
+     the board (lobby, game over, landing) don't shrink-wrap down to their
+     narrowest content and starve flex layouts like .final-row of any room
+     to space their children apart — but flex-shrink:1 still lets it shrink
+     to fit on viewports narrower than that, instead of overflowing. */
+  flex: 0 1 496px;
+  max-width: 100%;
 }
 
 .sidebar {
