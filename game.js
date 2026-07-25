@@ -153,6 +153,7 @@ function buildBoard({ mySlot, usedOwnKeys, picks, masterVertex, onPick }) {
 
 let uiPhase = "landing";     // landing | hostForm | joinForm | connecting | joinError | connected
 let submitting = false;      // guards against double-submit spawning duplicate Peer connections
+let countdownInterval = null; // client-only: ticks the visible pick countdown, independent of server state
 let joinErrorMsg = "";
 let peer = null;
 let isHost = false;
@@ -178,6 +179,8 @@ function createRoom(code) {
     lockedIn: [false, false, false, false],
     readyReveal: [false, false, false, false],
     readyContinue: [false, false, false, false],
+    timedMode: false,
+    pickDeadline: null,
   };
 }
 
@@ -202,6 +205,8 @@ function buildView(forSlot) {
     revealPicks: room.phase === "reveal" || room.phase === "gameover" ? room.currentPicks.slice() : null,
     lastRoundResult: room.history.length ? room.history[room.history.length - 1] : null,
     history: room.history.slice(), // every round is already revealed, so this is never secret
+    timedMode: room.timedMode,
+    pickDeadline: room.phase === "picking" ? room.pickDeadline : null,
   };
 }
 
@@ -218,7 +223,38 @@ function broadcastState() {
   });
 }
 
+// ---- Timed mode: host-only 15s-per-pick countdown for human players -------
+
+const TIMED_MODE_SECONDS = 15;
+let pickTimer = null; // host-only: the running countdown for the current round's picking phase
+
+function clearPickTimer() {
+  if (pickTimer) { clearTimeout(pickTimer); pickTimer = null; }
+}
+
+function startPickTimerIfNeeded() {
+  clearPickTimer();
+  if (!room.timedMode) { room.pickDeadline = null; return; }
+  room.pickDeadline = Date.now() + TIMED_MODE_SECONDS * 1000;
+  pickTimer = setTimeout(() => {
+    if (!room || room.phase !== "picking") return;
+    // Force a legal random pick for any human who let the clock run out —
+    // bots are already fast enough that they never need this.
+    room.slots.forEach((s, slot) => {
+      if (!s || s.isBot || room.lockedIn[slot]) return;
+      const [x, y] = randomAvailableVertex(slot);
+      actionPick(s, x, y);
+    });
+  }, TIMED_MODE_SECONDS * 1000);
+}
+
 // ---- Host-side action handlers (pure-ish; mutate `room`, then broadcast) --
+
+function actionSetTimedMode(participant, value) {
+  if (room.phase !== "lobby") return;
+  room.timedMode = !!value;
+  broadcastState();
+}
 
 function actionChooseSlot(participant, targetSlot) {
   if (room.phase !== "lobby") return;
@@ -234,7 +270,10 @@ function actionChooseSlot(participant, targetSlot) {
 function actionToggleReady(participant) {
   if (room.phase !== "lobby") return;
   participant.lobbyReady = !participant.lobbyReady;
-  if (room.slots.every((s) => s && s.lobbyReady)) room.phase = "picking";
+  if (room.slots.every((s) => s && s.lobbyReady)) {
+    room.phase = "picking";
+    startPickTimerIfNeeded();
+  }
   broadcastState();
   maybeRunBots();
 }
@@ -278,7 +317,7 @@ function actionPick(participant, x, y) {
 
   room.currentPicks[slot] = [x, y];
   room.lockedIn[slot] = true;
-  if (room.lockedIn.every(Boolean)) room.phase = "revealReady";
+  if (room.lockedIn.every(Boolean)) { room.phase = "revealReady"; clearPickTimer(); }
   broadcastState();
   maybeRunBots();
 }
@@ -455,7 +494,7 @@ function advanceRound() {
   room.lockedIn = [false, false, false, false];
   room.currentPicks = [null, null, null, null];
   if (room.round >= TOTAL_ROUNDS) room.phase = "gameover";
-  else { room.round++; room.phase = "picking"; }
+  else { room.round++; room.phase = "picking"; startPickTimerIfNeeded(); }
 }
 
 function actionReadyContinue(participant) {
@@ -472,6 +511,7 @@ function dispatchAction(participant, msg) {
   switch (msg.t) {
     case "chooseSlot": return actionChooseSlot(participant, msg.slot);
     case "toggleReady": return actionToggleReady(participant);
+    case "setTimedMode": return actionSetTimedMode(participant, msg.value);
     case "addBot": return actionAddBot(participant, msg.slot, msg.difficulty);
     case "removeBot": return actionRemoveBot(participant, msg.slot);
     case "pick": return actionPick(participant, msg.x, msg.y);
@@ -637,6 +677,7 @@ function el(tag, attrs = {}, children = []) {
 
 function render() {
   clearStage();
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   renderScoreboard();
 
   const isGameOver = uiPhase === "connected" && myView && myView.phase === "gameover";
@@ -829,6 +870,15 @@ function renderLobby() {
   const humanCount = v.players.filter((p) => p && !p.isBot).length;
   stage.appendChild(el("div", { class: "stage-sub", text: `${filledCount}/4 seats filled • ${readyCount}/4 ready • ${humanCount} human player(s), ${v.botCount} bot(s)` }));
 
+  const timedLabel = el("label", { class: "timed-mode-toggle" });
+  const timedCheckbox = document.createElement("input");
+  timedCheckbox.type = "checkbox";
+  timedCheckbox.checked = v.timedMode;
+  timedCheckbox.addEventListener("change", () => sendAction({ t: "setTimedMode", value: timedCheckbox.checked }));
+  timedLabel.appendChild(timedCheckbox);
+  timedLabel.appendChild(document.createTextNode(` Timed mode — ${TIMED_MODE_SECONDS}s per pick for human players`));
+  stage.appendChild(timedLabel);
+
   const me = v.mySlot != null ? v.players[v.mySlot] : null;
   const readyBtn = el("button", { text: me && me.lobbyReady ? "Not Ready" : "Ready" });
   readyBtn.addEventListener("click", () => sendAction({ t: "toggleReady" }));
@@ -855,6 +905,18 @@ function renderPicking() {
   const myAvailableCount = 9 - v.usedOwnKeys[v.mySlot].length;
   if (masterInMyRegion && myAvailableCount > 1) {
     stage.appendChild(el("div", { class: "stage-sub", text: "You can't play directly on the master point unless it's your only point left." }));
+  }
+
+  if (v.timedMode && !iLockedIn && v.pickDeadline) {
+    const timerEl = el("div", { class: "pick-timer" });
+    stage.appendChild(timerEl);
+    const update = () => {
+      const secsLeft = Math.max(0, Math.ceil((v.pickDeadline - Date.now()) / 1000));
+      timerEl.textContent = secsLeft > 0 ? `⏱ ${secsLeft}s left to pick` : "⏱ Time's up — picking for you…";
+      timerEl.classList.toggle("urgent", secsLeft <= 5);
+    };
+    update();
+    countdownInterval = setInterval(update, 250);
   }
 
   const picksDisplay = [null, null, null, null];

@@ -317,6 +317,31 @@ button.small {
   margin-top: 6px;
 }
 
+.timed-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.timed-mode-toggle input {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.pick-timer {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pick-timer.urgent {
+  color: #b23a3a;
+}
+
 .player-pill {
   display: inline-flex;
   align-items: center;
