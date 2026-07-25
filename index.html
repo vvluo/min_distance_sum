@@ -34,7 +34,7 @@
           <h2>Rules</h2>
           <ul id="rules-list">
             <li data-example="own">Each player has 9 vertices (the 3&times;3 interior corners of their quadrant) and plays exactly one per round.</li>
-            <li data-example="master">Each round a <strong>master vertex</strong> is drawn at random (without replacement) from the 49 interior corners of the whole board, and is visible to everyone before they pick.</li>
+            <li data-example="master">Each round a <strong>master vertex</strong> is drawn at random (without replacement) from the 49 interior corners of the whole board, and is visible to everyone before they pick. You may not play directly on it unless it's your only vertex left.</li>
             <li data-example="scoring">Your score for the round is the <strong>smallest distance</strong> from your vertex to any of the other 4 vertices in play (3 opponents + master).</li>
             <li data-example="penalty">If the master vertex falls strictly inside one player's region, that player gets a <strong>+2 penalty</strong> and their diagonal opponent gets a <strong>&minus;1 bonus</strong>. On the shared border between two regions, both of those players get <strong>+1</strong> each (no diagonal bonus). The single center point shared by all four is neutral.</li>
             <li>Picks are hidden until everyone is ready, then revealed together.</li>

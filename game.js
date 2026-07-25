@@ -90,17 +90,27 @@ function buildBoard({ mySlot, usedOwnKeys, picks, masterVertex, onPick }) {
   const usedSet = new Set();
   (usedOwnKeys || []).forEach((arr) => arr.forEach((k) => usedSet.add(k)));
 
+  // Playing directly on the master vertex is disallowed unless it's the
+  // player's only remaining vertex — mirrors the same rule enforced in
+  // actionPick, computed here from the mine-only usedOwnKeys[mySlot] count.
+  const myAvailableCount = mySlot != null && usedOwnKeys ? 9 - usedOwnKeys[mySlot].length : null;
+
+  let masterIsMyOnlyMove = false;
+
   for (let x = 1; x <= 7; x++) {
     for (let y = 1; y <= 7; y++) {
       const k = key(x, y);
       const px = x * CELL, py = y * CELL;
       const usedHere = usedSet.has(k);
+      const isMasterHere = masterVertex && x === masterVertex[0] && y === masterVertex[1];
+      const blockedByMaster = isMasterHere && myAvailableCount != null && myAvailableCount > 1;
 
       let clickable = false, fill = "rgba(255,255,255,0.9)", stroke = "rgba(0,0,0,0.15)", r = 4;
       if (usedHere) { fill = "rgba(90,90,95,0.55)"; stroke = "rgba(90,90,95,0.7)"; }
-      if (onPick && activePlayer && inRegion(activePlayer, x, y) && !usedHere) {
+      if (onPick && activePlayer && inRegion(activePlayer, x, y) && !usedHere && !blockedByMaster) {
         clickable = true; fill = activePlayer.solid; stroke = "white"; r = 7;
       }
+      if (clickable && isMasterHere) masterIsMyOnlyMove = true;
 
       const circle = svgEl("circle", { cx: px, cy: py, r, fill, stroke, "stroke-width": 1.5, class: "vertex" + (clickable ? " clickable" : "") });
       if (clickable) circle.addEventListener("click", () => onPick(x, y));
@@ -120,6 +130,12 @@ function buildBoard({ mySlot, usedOwnKeys, picks, masterVertex, onPick }) {
   }
   if (masterVertex) {
     svg.appendChild(svgEl("circle", { cx: masterVertex[0] * CELL, cy: masterVertex[1] * CELL, r: 10, fill: "black", stroke: "white", "stroke-width": 2, "pointer-events": "none" }));
+    // The master's larger black dot would otherwise completely hide the
+    // smaller clickable vertex beneath it — surface it again on top so it's
+    // obvious this forced move is still selectable, not just informational.
+    if (masterIsMyOnlyMove) {
+      svg.appendChild(svgEl("circle", { cx: masterVertex[0] * CELL, cy: masterVertex[1] * CELL, r: 5, fill: activePlayer.solid, stroke: "white", "stroke-width": 1.5, "pointer-events": "none" }));
+    }
   }
   return svg;
 }
@@ -252,6 +268,11 @@ function actionPick(participant, x, y) {
   const inRegion = x >= player.qx[0] && x <= player.qx[1] && y >= player.qy[0] && y <= player.qy[1];
   if (!inRegion || room.usedOwnKeys[slot].has(key(x, y))) return;
 
+  // Playing directly on the master vertex is disallowed unless it's the
+  // player's only remaining vertex — i.e. they have no other legal move.
+  const master = room.masterSequence[room.round - 1];
+  if (x === master[0] && y === master[1] && availableVertices(slot).length > 1) return;
+
   room.currentPicks[slot] = [x, y];
   room.lockedIn[slot] = true;
   if (room.lockedIn.every(Boolean)) room.phase = "revealReady";
@@ -272,8 +293,18 @@ function availableVertices(slot) {
   return available;
 }
 
+// Vertices a player may actually pick this round — excludes the master
+// vertex itself unless it's their only remaining vertex, mirroring the same
+// rule actionPick enforces for human players.
+function pickableVertices(slot) {
+  const all = availableVertices(slot);
+  if (all.length <= 1) return all;
+  const master = room.masterSequence[room.round - 1];
+  return all.filter((v) => v[0] !== master[0] || v[1] !== master[1]);
+}
+
 function randomAvailableVertex(slot) {
-  const available = availableVertices(slot);
+  const available = pickableVertices(slot);
   return available[Math.floor(Math.random() * available.length)];
 }
 
@@ -281,7 +312,7 @@ function randomAvailableVertex(slot) {
 // closest to the master vertex. Ties go to whichever of those is furthest
 // from the board's center (0,0); if that's still tied, pick randomly.
 function mediumBotVertex(slot) {
-  const available = availableVertices(slot);
+  const available = pickableVertices(slot);
   const master = room.masterSequence[room.round - 1];
   const distToOrigin = (v) => Math.hypot(...disp(v[0], v[1]));
 
@@ -798,6 +829,12 @@ function renderPicking() {
       : `Round ${v.round} of ${v.totalRounds} — pick one of your available vertices. Black dot is this round's master vertex.`,
   }));
 
+  const masterInMyRegion = !iLockedIn && v.masterVertex && p.qx[0] <= v.masterVertex[0] && v.masterVertex[0] <= p.qx[1] && p.qy[0] <= v.masterVertex[1] && v.masterVertex[1] <= p.qy[1];
+  const myAvailableCount = 9 - v.usedOwnKeys[v.mySlot].length;
+  if (masterInMyRegion && myAvailableCount > 1) {
+    stage.appendChild(el("div", { class: "stage-sub", text: "You can't play directly on the master vertex unless it's your only vertex left." }));
+  }
+
   const picksDisplay = [null, null, null, null];
   if (v.myPick) picksDisplay[v.mySlot] = v.myPick;
 
@@ -920,7 +957,7 @@ function renderScoreboard() {
 
 const EXAMPLE_CAPTIONS = {
   own: "Red's 9 playable vertices — the 3×3 interior corners of their quadrant.",
-  master: "A master vertex (black) is drawn from the board's 49 interior corners and shown to everyone before they pick.",
+  master: "A master vertex (black) is drawn from the board's 49 interior corners and shown to everyone before they pick. You can't play on it unless it's your only vertex left.",
   scoring: "Each player's score is their distance to the nearest of the other 4 points — sometimes another player, sometimes the master vertex.",
   penalty: "A master vertex inside a region penalizes that player and rewards their diagonal opponent; on a shared border it penalizes both neighbors instead.",
 };
