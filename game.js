@@ -483,6 +483,9 @@ function handleJoin(conn, msg) {
     // Before the game starts, a disconnected player's slot can be claimed by
     // a new joiner (e.g. they refreshed without their old session, or gave up).
     if (freeIndex === -1 && room.phase === "lobby") freeIndex = room.slots.findIndex((s) => s && !s.connected);
+    // Failing that, a real human bumps a bot rather than being told the room
+    // is full — bots exist to fill empty seats, not to hold them from people.
+    if (freeIndex === -1 && room.phase === "lobby") freeIndex = room.slots.findIndex((s) => s && s.isBot);
     if (freeIndex === -1) { try { conn.send({ t: "joinError", reason: "Room is full (4/4 players already joined)." }); } catch (e) {} return; }
     participant = { sessionId: msg.sessionId || genSessionId(), name: msg.name || "Player", conn, connected: true, lobbyReady: false };
     room.slots[freeIndex] = participant;
@@ -660,6 +663,8 @@ function renderLanding() {
   stage.appendChild(row);
 }
 
+const NAME_STORAGE_KEY = "mds-player-name"; // sessionStorage: scoped to this tab only
+
 function nameInputRow(placeholder, onSubmit) {
   const wrap = el("div", { class: "form-row" });
   const input = document.createElement("input");
@@ -667,7 +672,9 @@ function nameInputRow(placeholder, onSubmit) {
   input.placeholder = placeholder;
   input.maxLength = 20;
   input.className = "text-input";
+  input.value = sessionStorage.getItem(NAME_STORAGE_KEY) || "";
   wrap.appendChild(input);
+  input.addEventListener("input", () => sessionStorage.setItem(NAME_STORAGE_KEY, input.value));
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") onSubmit(input.value); });
   return { wrap, input };
 }
@@ -828,13 +835,13 @@ function renderPicking() {
     class: "stage-sub",
     text: iLockedIn
       ? `You're locked in — waiting for ${4 - lockedInCount} more player(s).`
-      : `Round ${v.round} of ${v.totalRounds} — pick one of your available vertices. Black dot is this round's master vertex.`,
+      : `Round ${v.round} of ${v.totalRounds} — pick one of your available points. Black dot is this round's master point.`,
   }));
 
   const masterInMyRegion = !iLockedIn && v.masterVertex && p.qx[0] <= v.masterVertex[0] && v.masterVertex[0] <= p.qx[1] && p.qy[0] <= v.masterVertex[1] && v.masterVertex[1] <= p.qy[1];
   const myAvailableCount = 9 - v.usedOwnKeys[v.mySlot].length;
   if (masterInMyRegion && myAvailableCount > 1) {
-    stage.appendChild(el("div", { class: "stage-sub", text: "You can't play directly on the master vertex unless it's your only vertex left." }));
+    stage.appendChild(el("div", { class: "stage-sub", text: "You can't play directly on the master point unless it's your only point left." }));
   }
 
   const picksDisplay = [null, null, null, null];
@@ -871,7 +878,7 @@ function renderReveal() {
   const wrap = el("div", { class: "round-summary" });
   const table = el("table");
   table.appendChild(el("thead", {}, [el("tr", {}, [
-    el("th", { text: "Player" }), el("th", { text: "Vertex" }), el("th", { text: "Min Dist" }), el("th", { text: "Penalty" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
+    el("th", { text: "Player" }), el("th", { text: "Point" }), el("th", { text: "Min Dist" }), el("th", { text: "Penalty" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
   ])]));
   const tbody = el("tbody");
   PLAYERS.forEach((p, i) => {
@@ -886,7 +893,7 @@ function renderReveal() {
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
-  wrap.appendChild(el("div", { class: "stage-sub", text: `Master vertex: ${dispStr(h.master[0], h.master[1])}${penaltyExplanation(h.master, h.penalties)}`, style: "margin-top:10px" }));
+  wrap.appendChild(el("div", { class: "stage-sub", text: `Master point: ${dispStr(h.master[0], h.master[1])}${penaltyExplanation(h.master, h.penalties)}`, style: "margin-top:10px" }));
   stage.appendChild(wrap);
 
   const readyCount = v.readyContinue.filter(Boolean).length;
@@ -958,10 +965,10 @@ function renderScoreboard() {
 // ---- Rules panel: hover examples ------------------------------------------
 
 const EXAMPLE_CAPTIONS = {
-  own: "Red's 9 playable vertices — the 3×3 interior corners of their quadrant.",
-  master: "A master vertex (black) is drawn from the board's 49 interior corners and shown to everyone before they pick. You can't play on it unless it's your only vertex left.",
-  scoring: "Each player's score is their distance to the nearest of the other 4 points — sometimes another player, sometimes the master vertex.",
-  penalty: "A master vertex inside a region penalizes that player and rewards their diagonal opponent; on a shared border it penalizes both neighbors instead.",
+  own: "Red's 9 playable points — the 3×3 interior corners of their quadrant.",
+  master: "A master point (black) is drawn from the board's 49 interior corners and shown to everyone before they pick. You can't play on it unless it's your only point left.",
+  scoring: "Each player's score is their distance to the nearest of the other 4 points — sometimes another player, sometimes the master point.",
+  penalty: "A master point inside a region penalizes that player and rewards their diagonal opponent; on a shared border it penalizes both neighbors instead.",
 };
 
 function buildExampleBoard(kind) {
