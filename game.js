@@ -21,7 +21,9 @@ const TOTAL_ROUNDS = 9;
 const key = (x, y) => `${x},${y}`;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const round6 = (v) => Math.round(v * 1e6) / 1e6;
-const disp = (x, y) => [x - CENTER, y - CENTER];
+// Display coordinates: x positive to the right (matches raw grid), y positive
+// upward (flipped from raw grid, which increases downward like screen space).
+const disp = (x, y) => [x - CENTER, CENTER - y];
 const dispStr = (x, y) => { const [dx, dy] = disp(x, y); return `(${dx}, ${dy})`; };
 
 function masterPoolAll() {
