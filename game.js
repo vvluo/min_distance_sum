@@ -364,65 +364,55 @@ function maybeRunBots() {
 }
 
 // Balance rule: a master vertex strictly inside one player's own region
-// penalizes that player (+2) and gives their diagonal opponent a bonus (-1);
-// one sitting exactly on the shared edge between two regions penalizes both
-// of those players (+1 each), with no diagonal bonus. The single center
-// point where all four regions meet belongs to none of them, so it's neutral.
-const DIAGONAL_SLOT = [3, 2, 1, 0]; // Red<->Yellow, Blue<->Green
-
-function regionPenalties(vertex) {
+// triples that player's own distance (rather than adding a flat penalty);
+// one sitting exactly on the shared edge between two regions adds +1 to both
+// of those players' distances instead. The single center point where all
+// four regions meet belongs to none of them, so it's neutral.
+function regionEffects(vertex) {
   const [x, y] = vertex;
   const onXBoundary = x === CENTER;
   const onYBoundary = y === CENTER;
-  const penalties = [0, 0, 0, 0];
-  if (onXBoundary && onYBoundary) return penalties; // four-way center: neutral
+  const additive = [0, 0, 0, 0];
+  const multiplier = [1, 1, 1, 1];
+  if (onXBoundary && onYBoundary) return { additive, multiplier }; // four-way center: neutral
   if (onXBoundary) {
     const [a, b] = y < CENTER ? [0, 1] : [2, 3];
-    penalties[a] = 1; penalties[b] = 1;
+    additive[a] = 1; additive[b] = 1;
   } else if (onYBoundary) {
     const [a, b] = x < CENTER ? [0, 2] : [1, 3];
-    penalties[a] = 1; penalties[b] = 1;
+    additive[a] = 1; additive[b] = 1;
   } else {
     const slot = PLAYERS.findIndex((p) => x >= p.qx[0] && x <= p.qx[1] && y >= p.qy[0] && y <= p.qy[1]);
-    penalties[slot] = 2;
-    penalties[DIAGONAL_SLOT[slot]] -= 1;
+    multiplier[slot] = 3;
   }
-  return penalties;
+  return { additive, multiplier };
 }
 
-function formatPenalty(p) {
-  if (p > 0) return `+${p}`;
-  if (p < 0) return `${p}`;
+function formatEffect(multiplier, additive) {
+  if (multiplier !== 1) return `×${multiplier}`;
+  if (additive > 0) return `+${additive}`;
   return "—";
 }
 
-function penaltyExplanation(master, penalties) {
-  const positive = PLAYERS.filter((p) => penalties[p.id] > 0);
-  const negative = PLAYERS.filter((p) => penalties[p.id] < 0);
-  if (positive.length === 0 && negative.length === 0) return " — the center point, shared by all four regions (no penalty)";
-  const parts = [];
-  if (positive.length === 1) {
-    parts.push(`inside ${positive[0].name}'s region (${formatPenalty(penalties[positive[0].id])})`);
-  } else if (positive.length === 2) {
-    parts.push(`on the border between ${positive.map((p) => p.name).join(" and ")} (${formatPenalty(penalties[positive[0].id])} each)`);
-  }
-  if (negative.length === 1) {
-    parts.push(`${negative[0].name} gets a diagonal bonus (${formatPenalty(penalties[negative[0].id])})`);
-  }
-  return " — " + parts.join("; ");
+function effectExplanation(master, additive, multiplier) {
+  const tripled = PLAYERS.filter((p) => multiplier[p.id] !== 1);
+  const bordered = PLAYERS.filter((p) => additive[p.id] > 0);
+  if (tripled.length === 0 && bordered.length === 0) return " — the center point, shared by all four regions (no effect)";
+  if (tripled.length === 1) return ` — inside ${tripled[0].name}'s region (${formatEffect(multiplier[tripled[0].id], 0)} their distance)`;
+  return ` — on the border between ${bordered.map((p) => p.name).join(" and ")} (${formatEffect(1, additive[bordered[0].id])} each)`;
 }
 
 function doReveal() {
   const master = room.masterSequence[room.round - 1];
   const picks = room.currentPicks;
-  const penalties = regionPenalties(master);
+  const { additive, multiplier } = regionEffects(master);
   const baseScores = picks.map((pt, i) => {
     const others = [master, ...picks.filter((_, j) => j !== i)];
     return round6(Math.min(...others.map((o) => dist(pt, o))));
   });
-  const scores = baseScores.map((s, i) => round6(s + penalties[i]));
+  const scores = baseScores.map((s, i) => round6(s * multiplier[i] + additive[i]));
   scores.forEach((s, i) => (room.totals[i] += s));
-  room.history.push({ round: room.round, master, picks: picks.slice(), baseScores, penalties, scores });
+  room.history.push({ round: room.round, master, picks: picks.slice(), baseScores, additive, multiplier, scores });
   room.phase = "reveal";
   room.readyReveal = [false, false, false, false];
 }
@@ -878,7 +868,7 @@ function renderReveal() {
   const wrap = el("div", { class: "round-summary" });
   const table = el("table");
   table.appendChild(el("thead", {}, [el("tr", {}, [
-    el("th", { text: "Player" }), el("th", { text: "Point" }), el("th", { text: "Min Dist" }), el("th", { text: "Penalty" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
+    el("th", { text: "Player" }), el("th", { text: "Point" }), el("th", { text: "Min Dist" }), el("th", { text: "Effect" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
   ])]));
   const tbody = el("tbody");
   PLAYERS.forEach((p, i) => {
@@ -886,14 +876,14 @@ function renderReveal() {
       el("td", {}, [playerPillNamed(p, v.players[i] ? v.players[i].name : p.name)]),
       el("td", { text: dispStr(h.picks[i][0], h.picks[i][1]) }),
       el("td", { text: h.baseScores[i].toFixed(3) }),
-      el("td", { text: formatPenalty(h.penalties[i]) }),
+      el("td", { text: formatEffect(h.multiplier[i], h.additive[i]) }),
       el("td", { text: h.scores[i].toFixed(3) }),
       el("td", { text: v.totals[i].toFixed(3) }),
     ]));
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
-  wrap.appendChild(el("div", { class: "stage-sub", text: `Master point: ${dispStr(h.master[0], h.master[1])}${penaltyExplanation(h.master, h.penalties)}`, style: "margin-top:10px" }));
+  wrap.appendChild(el("div", { class: "stage-sub", text: `Master point: ${dispStr(h.master[0], h.master[1])}${effectExplanation(h.master, h.additive, h.multiplier)}`, style: "margin-top:10px" }));
   stage.appendChild(wrap);
 
   const readyCount = v.readyContinue.filter(Boolean).length;
@@ -968,7 +958,7 @@ const EXAMPLE_CAPTIONS = {
   own: "Red's 9 playable points — the 3×3 interior corners of their quadrant.",
   master: "A master point (black) is drawn from the board's 49 interior corners and shown to everyone before they pick. You can't play on it unless it's your only point left.",
   scoring: "Each player's score is their distance to the nearest of the other 4 points — sometimes another player, sometimes the master point.",
-  penalty: "A master point inside a region penalizes that player and rewards their diagonal opponent; on a shared border it penalizes both neighbors instead.",
+  penalty: "A master point inside a region triples that player's own distance; on a shared border it instead adds +1 to both neighbors' distances.",
 };
 
 function buildExampleBoard(kind) {
@@ -1043,8 +1033,7 @@ function buildExampleBoard(kind) {
 
   if (kind === "penalty") {
     const blue = PLAYERS[1];
-    const yellow = PLAYERS[3];
-    [red, blue, yellow].forEach((p) => {
+    [red, blue].forEach((p) => {
       const x0 = (p.qx[0] - 1) * EX_CELL;
       const y0 = (p.qy[0] - 1) * EX_CELL;
       svg.appendChild(svgEl("rect", { x: x0, y: y0, width: 4 * EX_CELL, height: 4 * EX_CELL, fill: "none", stroke: p.solid, "stroke-width": 3 }));
@@ -1058,29 +1047,18 @@ function buildExampleBoard(kind) {
 
     const interior = [2, 2];
     const border = [4, 2];
-    const diagonal = [6, 6]; // Yellow, diagonally opposite Red
-
-    svg.appendChild(svgEl("line", {
-      x1: interior[0] * EX_CELL, y1: interior[1] * EX_CELL, x2: diagonal[0] * EX_CELL, y2: diagonal[1] * EX_CELL,
-      stroke: "rgba(0,0,0,0.3)", "stroke-width": 1, "stroke-dasharray": "3,2",
-    }));
 
     [interior, border].forEach((pt) => {
       svg.appendChild(svgEl("circle", { cx: pt[0] * EX_CELL, cy: pt[1] * EX_CELL, r: 7, fill: "black", stroke: "white", "stroke-width": 2 }));
     });
-    svg.appendChild(svgEl("circle", { cx: diagonal[0] * EX_CELL, cy: diagonal[1] * EX_CELL, r: 6, fill: yellow.solid, stroke: "white", "stroke-width": 2 }));
 
     const t1 = svgEl("text", { x: interior[0] * EX_CELL, y: interior[1] * EX_CELL - 12, "font-size": 9, fill: "#333", "text-anchor": "middle" });
-    t1.textContent = "Red +2";
+    t1.textContent = "Red ×3";
     svg.appendChild(t1);
 
     const t2 = svgEl("text", { x: border[0] * EX_CELL, y: border[1] * EX_CELL - 12, "font-size": 9, fill: "#333", "text-anchor": "middle" });
     t2.textContent = "+1 each";
     svg.appendChild(t2);
-
-    const t3 = svgEl("text", { x: diagonal[0] * EX_CELL, y: diagonal[1] * EX_CELL - 11, "font-size": 9, fill: "#333", "text-anchor": "middle" });
-    t3.textContent = "Yellow −1";
-    svg.appendChild(t3);
   }
 
   return svg;
