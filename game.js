@@ -201,6 +201,7 @@ function buildView(forSlot) {
     myPick: forSlot != null ? room.currentPicks[forSlot] : null,
     revealPicks: room.phase === "reveal" || room.phase === "gameover" ? room.currentPicks.slice() : null,
     lastRoundResult: room.history.length ? room.history[room.history.length - 1] : null,
+    history: room.history.slice(), // every round is already revealed, so this is never secret
   };
 }
 
@@ -386,6 +387,25 @@ function regionEffects(vertex) {
     multiplier[slot] = 3;
   }
   return { additive, multiplier };
+}
+
+// Same geometry as regionEffects, but as a plain classification for the
+// small indicator dot next to each round row in the review panel.
+function classifyMasterVertex(vertex) {
+  const [x, y] = vertex;
+  const onXBoundary = x === CENTER;
+  const onYBoundary = y === CENTER;
+  if (onXBoundary && onYBoundary) return { type: "center" };
+  if (onXBoundary) {
+    const [a, b] = y < CENTER ? [0, 1] : [2, 3]; // left, right of the vertical line
+    return { type: "split", axis: "x", colors: [PLAYERS[a].solid, PLAYERS[b].solid] };
+  }
+  if (onYBoundary) {
+    const [a, b] = x < CENTER ? [0, 2] : [1, 3]; // top, bottom of the horizontal line
+    return { type: "split", axis: "y", colors: [PLAYERS[a].solid, PLAYERS[b].solid] };
+  }
+  const slot = PLAYERS.findIndex((p) => x >= p.qx[0] && x <= p.qx[1] && y >= p.qy[0] && y <= p.qy[1]);
+  return { type: "solid", color: PLAYERS[slot].solid };
 }
 
 function formatEffect(multiplier, additive) {
@@ -618,6 +638,9 @@ function el(tag, attrs = {}, children = []) {
 function render() {
   clearStage();
   renderScoreboard();
+
+  const isGameOver = uiPhase === "connected" && myView && myView.phase === "gameover";
+  document.querySelector(".board-card").classList.toggle("wide", isGameOver);
 
   if (uiPhase !== "connected") return renderPreGame();
 
@@ -859,13 +882,7 @@ function renderRevealReady() {
   }
 }
 
-function renderReveal() {
-  const v = myView;
-  const h = v.lastRoundResult;
-  stage.appendChild(el("div", { class: "stage-title", text: `Round ${h.round} results` }));
-  stage.appendChild(buildBoard({ picks: h.picks, masterVertex: h.master }));
-
-  const wrap = el("div", { class: "round-summary" });
+function buildRoundSummaryTable(v, h, totalsThroughRound) {
   const table = el("table");
   table.appendChild(el("thead", {}, [el("tr", {}, [
     el("th", { text: "Player" }), el("th", { text: "Point" }), el("th", { text: "Min Dist" }), el("th", { text: "Effect" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
@@ -878,11 +895,21 @@ function renderReveal() {
       el("td", { text: h.baseScores[i].toFixed(3) }),
       el("td", { text: formatEffect(h.multiplier[i], h.additive[i]) }),
       el("td", { text: h.scores[i].toFixed(3) }),
-      el("td", { text: v.totals[i].toFixed(3) }),
+      el("td", { text: totalsThroughRound[i].toFixed(3) }),
     ]));
   });
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  return table;
+}
+
+function renderReveal() {
+  const v = myView;
+  const h = v.lastRoundResult;
+  stage.appendChild(el("div", { class: "stage-title", text: `Round ${h.round} results` }));
+  stage.appendChild(buildBoard({ picks: h.picks, masterVertex: h.master }));
+
+  const wrap = el("div", { class: "round-summary" });
+  wrap.appendChild(buildRoundSummaryTable(v, h, v.totals));
   wrap.appendChild(el("div", { class: "stage-sub", text: `Master point: ${dispStr(h.master[0], h.master[1])}${effectExplanation(h.master, h.additive, h.multiplier)}`, style: "margin-top:10px" }));
   stage.appendChild(wrap);
 
@@ -895,6 +922,50 @@ function renderReveal() {
   } else {
     stage.appendChild(el("div", { class: "stage-sub", text: `Waiting for ${4 - readyCount} more player(s)…` }));
   }
+}
+
+function buildReviewPanel(v) {
+  const running = [0, 0, 0, 0];
+  const cumulative = v.history.map((h) => {
+    h.scores.forEach((s, i) => (running[i] += s));
+    return running.slice();
+  });
+
+  const panel = el("div", { class: "review-panel" });
+  const boardSlot = el("div", { class: "review-board-slot" });
+  const roundsWrap = el("div", { class: "review-rounds" });
+
+  function showRound(idx) {
+    const h = v.history[idx];
+    boardSlot.innerHTML = "";
+    boardSlot.appendChild(el("div", { class: "stage-sub", text: `Round ${h.round}`, style: "margin-bottom:8px" }));
+    boardSlot.appendChild(buildBoard({ picks: h.picks, masterVertex: h.master }));
+    const wrap = el("div", { class: "round-summary" });
+    wrap.appendChild(buildRoundSummaryTable(v, h, cumulative[idx]));
+    wrap.appendChild(el("div", { class: "stage-sub", text: `Master point: ${dispStr(h.master[0], h.master[1])}${effectExplanation(h.master, h.additive, h.multiplier)}`, style: "margin-top:10px" }));
+    boardSlot.appendChild(wrap);
+    [...roundsWrap.children].forEach((row, i) => row.classList.toggle("active", i === idx));
+  }
+
+  v.history.forEach((h, idx) => {
+    const info = classifyMasterVertex(h.master);
+    const dot = el("span", { class: "review-round-dot" });
+    if (info.type === "solid") {
+      dot.style.background = info.color;
+    } else if (info.type === "split") {
+      const dir = info.axis === "x" ? "90deg" : "180deg";
+      dot.style.background = `linear-gradient(${dir}, ${info.colors[0]} 50%, ${info.colors[1]} 50%)`;
+    } // "center" stays empty (transparent, outline only) via the base CSS
+
+    const row = el("div", { class: "review-round-row" }, [dot, document.createTextNode(`Round ${h.round}`)]);
+    row.addEventListener("mouseenter", () => showRound(idx));
+    roundsWrap.appendChild(row);
+  });
+
+  panel.appendChild(boardSlot);
+  panel.appendChild(roundsWrap);
+  showRound(v.history.length - 1);
+  return panel;
 }
 
 function renderGameOver() {
@@ -917,6 +988,12 @@ function renderGameOver() {
     board.appendChild(row);
   });
   stage.appendChild(board);
+
+  if (v.history.length) {
+    stage.appendChild(el("div", { class: "stage-title", text: "Round Review", style: "margin-top:16px" }));
+    stage.appendChild(el("div", { class: "stage-sub", text: "Hover a round to see how it played out." }));
+    stage.appendChild(buildReviewPanel(v));
+  }
 
   const btn = el("button", { text: "Leave Game" });
   btn.addEventListener("click", () => location.reload());
