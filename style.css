@@ -331,20 +331,22 @@ button.small {
 
 .round-summary {
   width: 100%;
-  max-width: 460px;
+  max-width: 480px;
+  overflow-x: auto;
 }
 
 .round-summary table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 13px;
   margin-top: 8px;
 }
 
 .round-summary th, .round-summary td {
   text-align: left;
-  padding: 6px 4px;
+  padding: 6px 3px;
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 
 .final-board {

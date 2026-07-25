@@ -298,15 +298,50 @@ function maybeRunBots() {
   }
 }
 
+// Balance rule: a master vertex strictly inside one player's own region
+// penalizes that player (+2); one sitting exactly on the shared edge between
+// two regions penalizes both of those players (+1 each). The single center
+// point where all four regions meet belongs to none of them, so it's neutral.
+function regionPenalties(vertex) {
+  const [x, y] = vertex;
+  const onXBoundary = x === CENTER;
+  const onYBoundary = y === CENTER;
+  const penalties = [0, 0, 0, 0];
+  if (onXBoundary && onYBoundary) return penalties; // four-way center: neutral
+  if (onXBoundary) {
+    const [a, b] = y < CENTER ? [0, 1] : [2, 3];
+    penalties[a] = 1; penalties[b] = 1;
+  } else if (onYBoundary) {
+    const [a, b] = x < CENTER ? [0, 2] : [1, 3];
+    penalties[a] = 1; penalties[b] = 1;
+  } else {
+    const slot = PLAYERS.findIndex((p) => x >= p.qx[0] && x <= p.qx[1] && y >= p.qy[0] && y <= p.qy[1]);
+    penalties[slot] = 2;
+  }
+  return penalties;
+}
+
+function penaltyExplanation(master, penalties) {
+  const affected = PLAYERS.filter((_, i) => penalties[i] > 0);
+  if (affected.length === 0) return " — the center point, shared by all four regions (no penalty)";
+  const names = affected.map((p) => p.name).join(" and ");
+  const amount = penalties[affected[0].id];
+  return affected.length === 1
+    ? ` — inside ${names}'s region (+${amount})`
+    : ` — on the border between ${names} (+${amount} each)`;
+}
+
 function doReveal() {
   const master = room.masterSequence[room.round - 1];
   const picks = room.currentPicks;
-  const scores = picks.map((pt, i) => {
+  const penalties = regionPenalties(master);
+  const baseScores = picks.map((pt, i) => {
     const others = [master, ...picks.filter((_, j) => j !== i)];
     return round6(Math.min(...others.map((o) => dist(pt, o))));
   });
+  const scores = baseScores.map((s, i) => round6(s + penalties[i]));
   scores.forEach((s, i) => (room.totals[i] += s));
-  room.history.push({ round: room.round, master, picks: picks.slice(), scores });
+  room.history.push({ round: room.round, master, picks: picks.slice(), baseScores, penalties, scores });
   room.phase = "reveal";
   room.readyReveal = [false, false, false, false];
 }
@@ -745,19 +780,23 @@ function renderReveal() {
 
   const wrap = el("div", { class: "round-summary" });
   const table = el("table");
-  table.appendChild(el("thead", {}, [el("tr", {}, [el("th", { text: "Player" }), el("th", { text: "Vertex" }), el("th", { text: "Score (min dist)" }), el("th", { text: "Total" })])]));
+  table.appendChild(el("thead", {}, [el("tr", {}, [
+    el("th", { text: "Player" }), el("th", { text: "Vertex" }), el("th", { text: "Min Dist" }), el("th", { text: "Penalty" }), el("th", { text: "Round Score" }), el("th", { text: "Total" }),
+  ])]));
   const tbody = el("tbody");
   PLAYERS.forEach((p, i) => {
     tbody.appendChild(el("tr", {}, [
       el("td", {}, [playerPillNamed(p, v.players[i] ? v.players[i].name : p.name)]),
       el("td", { text: dispStr(h.picks[i][0], h.picks[i][1]) }),
+      el("td", { text: h.baseScores[i].toFixed(3) }),
+      el("td", { text: h.penalties[i] ? `+${h.penalties[i]}` : "—" }),
       el("td", { text: h.scores[i].toFixed(3) }),
       el("td", { text: v.totals[i].toFixed(3) }),
     ]));
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
-  wrap.appendChild(el("div", { class: "stage-sub", text: `Master vertex: ${dispStr(h.master[0], h.master[1])}`, style: "margin-top:10px" }));
+  wrap.appendChild(el("div", { class: "stage-sub", text: `Master vertex: ${dispStr(h.master[0], h.master[1])}${penaltyExplanation(h.master, h.penalties)}`, style: "margin-top:10px" }));
   stage.appendChild(wrap);
 
   const readyCount = v.readyContinue.filter(Boolean).length;
@@ -832,6 +871,7 @@ const EXAMPLE_CAPTIONS = {
   own: "Red's 9 playable vertices — the 3×3 interior corners of their quadrant.",
   master: "A master vertex (black) is drawn from the board's 49 interior corners and shown to everyone before they pick.",
   scoring: "Each player's score is their distance to the nearest of the other 4 points — sometimes another player, sometimes the master vertex.",
+  penalty: "A master vertex inside a region penalizes that player; on a shared border it penalizes both neighbors.",
 };
 
 function buildExampleBoard(kind) {
@@ -902,6 +942,35 @@ function buildExampleBoard(kind) {
       t.textContent = n.dist.toFixed(3);
       svg.appendChild(t);
     });
+  }
+
+  if (kind === "penalty") {
+    const blue = PLAYERS[1];
+    [red, blue].forEach((p) => {
+      const x0 = (p.qx[0] - 1) * EX_CELL;
+      const y0 = (p.qy[0] - 1) * EX_CELL;
+      svg.appendChild(svgEl("rect", { x: x0, y: y0, width: 4 * EX_CELL, height: 4 * EX_CELL, fill: "none", stroke: p.solid, "stroke-width": 3 }));
+    });
+
+    for (let x = 1; x <= 7; x++) {
+      for (let y = 1; y <= 7; y++) {
+        svg.appendChild(svgEl("circle", { cx: x * EX_CELL, cy: y * EX_CELL, r: 2.5, fill: "rgba(255,255,255,0.7)", stroke: "rgba(0,0,0,0.12)", "stroke-width": 1 }));
+      }
+    }
+
+    const interior = [2, 2];
+    const border = [4, 2];
+    [interior, border].forEach((pt) => {
+      svg.appendChild(svgEl("circle", { cx: pt[0] * EX_CELL, cy: pt[1] * EX_CELL, r: 7, fill: "black", stroke: "white", "stroke-width": 2 }));
+    });
+
+    const t1 = svgEl("text", { x: interior[0] * EX_CELL, y: interior[1] * EX_CELL - 12, "font-size": 9, fill: "#333", "text-anchor": "middle" });
+    t1.textContent = "Red +2";
+    svg.appendChild(t1);
+
+    const t2 = svgEl("text", { x: border[0] * EX_CELL, y: border[1] * EX_CELL - 12, "font-size": 9, fill: "#333", "text-anchor": "middle" });
+    t2.textContent = "+1 each";
+    svg.appendChild(t2);
   }
 
   return svg;
