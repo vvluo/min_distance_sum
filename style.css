@@ -31,13 +31,22 @@ body {
   padding: 24px 20px 60px;
 }
 
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
 .app-header h1 {
   margin: 0 0 2px;
   font-size: 26px;
 }
 
 .subtitle {
-  margin: 0 0 20px;
+  margin: 0;
   color: var(--muted);
   font-size: 14px;
 }
@@ -261,6 +270,65 @@ button.small {
 
 .error-text {
   color: #b23a3a;
+}
+
+.auth-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  min-width: 220px;
+  max-width: 280px;
+}
+
+.auth-widget .text-input {
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.auth-form-row {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.auth-error {
+  font-size: 12px;
+  text-align: right;
+}
+
+.auth-user-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-email {
+  color: var(--ink);
+}
+
+.auth-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.auth-stats strong {
+  color: var(--ink);
 }
 
 .lobby-slots {

@@ -1,3 +1,14 @@
+// ---- Supabase config (Project Settings → API) ------------------------------
+// Optional: leave both blank to run with accounts/stats disabled entirely —
+// every other feature works identically either way. Fill in once you have a
+// Supabase project (see supabase/schema.sql for the required database setup).
+
+const SUPABASE_URL = "https://htopxmgljiysmbpyxmjm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh0b3B4bWdsaml5c21icHl4bWptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwMDQ0NjYsImV4cCI6MjEwMDU4MDQ2Nn0.NgaM8DsxC5p6PpwNOR_Er-xkeDWsie9Ty_GDQ_eK6vY"; // anon public key — safe to embed, protected by RLS
+
+const AUTH_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+const sb = AUTH_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
 // ---- Board constants -------------------------------------------------------
 
 const CELL = 56;
@@ -154,6 +165,10 @@ function buildBoard({ mySlot, usedOwnKeys, picks, masterVertex, onPick }) {
 let uiPhase = "landing";     // landing | hostForm | joinForm | connecting | joinError | connected
 let submitting = false;      // guards against double-submit spawning duplicate Peer connections
 let countdownInterval = null; // client-only: ticks the visible pick countdown, independent of server state
+let authUser = null;          // Supabase auth user object, or null if signed out
+let authStats = null;         // this user's row from `profiles`, or null if none yet / signed out
+let authBusy = false;         // true while a sign-in/up/out request is in flight
+let authError = "";
 let joinErrorMsg = "";
 let peer = null;
 let isHost = false;
@@ -659,6 +674,143 @@ function startAsGuest(code, name) {
   });
 }
 
+// ---- Accounts & stats (optional — everything above and below still works
+// with AUTH_ENABLED === false) ------------------------------------------
+
+const RECORDED_KEY = "mds-recorded-games"; // sessionStorage: per-tab, same rationale as NAME_STORAGE_KEY
+
+function hasRecordedGame(code) {
+  try { return JSON.parse(sessionStorage.getItem(RECORDED_KEY) || "[]").includes(code); }
+  catch (e) { return false; }
+}
+function markGameRecorded(code) {
+  const list = (() => { try { return JSON.parse(sessionStorage.getItem(RECORDED_KEY) || "[]"); } catch (e) { return []; } })();
+  if (!list.includes(code)) list.push(code);
+  sessionStorage.setItem(RECORDED_KEY, JSON.stringify(list));
+}
+function unmarkGameRecorded(code) {
+  const list = (() => { try { return JSON.parse(sessionStorage.getItem(RECORDED_KEY) || "[]"); } catch (e) { return []; } })();
+  sessionStorage.setItem(RECORDED_KEY, JSON.stringify(list.filter((c) => c !== code)));
+}
+
+async function fetchMyStats() {
+  if (!AUTH_ENABLED || !authUser) { authStats = null; return; }
+  const { data, error } = await sb.from("profiles").select("*").eq("id", authUser.id).maybeSingle();
+  authStats = error ? null : data; // no row yet just means "no games recorded" — not an error state
+}
+
+async function initAuth() {
+  if (!AUTH_ENABLED) return;
+  const { data } = await sb.auth.getSession();
+  authUser = data.session ? data.session.user : null;
+  await fetchMyStats();
+  renderAuthWidget();
+
+  sb.auth.onAuthStateChange(async (_event, session) => {
+    authUser = session ? session.user : null;
+    await fetchMyStats();
+    renderAuthWidget();
+  });
+}
+
+async function signUpWithEmail(email, password) {
+  authBusy = true; authError = ""; renderAuthWidget();
+  const { error } = await sb.auth.signUp({ email, password });
+  authBusy = false;
+  authError = error ? error.message : "Check your email to confirm your account, then sign in.";
+  renderAuthWidget();
+}
+
+async function signInWithEmail(email, password) {
+  authBusy = true; authError = ""; renderAuthWidget();
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  authBusy = false;
+  if (error) authError = error.message;
+  // on success, onAuthStateChange fires and re-renders the widget itself
+  renderAuthWidget();
+}
+
+async function signOutAuth() {
+  authBusy = true; renderAuthWidget();
+  await sb.auth.signOut();
+  authBusy = false;
+  // onAuthStateChange handles clearing authUser/authStats and re-rendering
+}
+
+function maybeRecordGameResult() {
+  if (!AUTH_ENABLED || !authUser || !myView || myView.mySlot == null) return;
+  if (hasRecordedGame(myView.code)) return;
+  markGameRecorded(myView.code); // mark before the request resolves, so a stray re-render can't double-fire
+  const mySlot = myView.mySlot;
+  const myTotal = myView.totals[mySlot];
+  const won = myView.totals.every((t, i) => i === mySlot || myTotal < t);
+  sb.rpc("record_game_result", { p_total: myTotal, p_won: won }).then(({ data, error }) => {
+    if (error) { unmarkGameRecorded(myView.code); return; } // allow a retry on the next render
+    authStats = data;
+    renderAuthWidget();
+  });
+}
+
+function renderAuthWidget() {
+  const widget = document.getElementById("auth-widget");
+  if (!widget || !AUTH_ENABLED) return;
+  widget.innerHTML = "";
+
+  if (!authUser) {
+    const box = el("div", { class: "auth-widget" });
+    const emailInput = document.createElement("input");
+    emailInput.type = "email";
+    emailInput.placeholder = "Email";
+    emailInput.className = "text-input";
+    emailInput.autocomplete = "email";
+    const passInput = document.createElement("input");
+    passInput.type = "password";
+    passInput.placeholder = "Password";
+    passInput.className = "text-input";
+    passInput.autocomplete = "current-password";
+
+    const row1 = el("div", { class: "auth-form-row" }, [emailInput]);
+    const row2 = el("div", { class: "auth-form-row" }, [passInput]);
+
+    const signInBtn = el("button", { text: "Sign In", class: "small" });
+    const signUpBtn = el("button", { text: "Sign Up", class: "small secondary" });
+    signInBtn.disabled = authBusy;
+    signUpBtn.disabled = authBusy;
+    signInBtn.addEventListener("click", () => signInWithEmail(emailInput.value.trim(), passInput.value));
+    signUpBtn.addEventListener("click", () => signUpWithEmail(emailInput.value.trim(), passInput.value));
+    const actions = el("div", { class: "auth-actions" }, [signInBtn, signUpBtn]);
+
+    box.appendChild(row1);
+    box.appendChild(row2);
+    box.appendChild(actions);
+    if (authError) box.appendChild(el("div", { class: "auth-error", text: authError }));
+    widget.appendChild(box);
+  } else {
+    const box = el("div", { class: "auth-widget" });
+    const signOutBtn = el("button", { text: "Sign Out", class: "small secondary" });
+    signOutBtn.disabled = authBusy;
+    signOutBtn.addEventListener("click", signOutAuth);
+    box.appendChild(el("div", { class: "auth-user-row" }, [
+      el("span", { class: "auth-email", text: authUser.email }),
+      signOutBtn,
+    ]));
+
+    const games = authStats ? authStats.games_played : 0;
+    const wins = authStats ? authStats.wins : 0;
+    const winRate = games > 0 ? ((wins / games) * 100).toFixed(0) + "%" : "—";
+    const avg = games > 0 ? (authStats.total_score / games).toFixed(3) : "—";
+    const best = authStats && authStats.best_score != null ? Number(authStats.best_score).toFixed(3) : "—";
+
+    const stats = el("div", { class: "auth-stats" });
+    stats.appendChild(el("div", {}, [document.createTextNode("Games: "), Object.assign(document.createElement("strong"), { textContent: games })]));
+    stats.appendChild(el("div", {}, [document.createTextNode("Wins: "), Object.assign(document.createElement("strong"), { textContent: `${wins} (${winRate})` })]));
+    stats.appendChild(el("div", {}, [document.createTextNode("Avg total: "), Object.assign(document.createElement("strong"), { textContent: avg })]));
+    stats.appendChild(el("div", {}, [document.createTextNode("Best total: "), Object.assign(document.createElement("strong"), { textContent: best })]));
+    box.appendChild(stats);
+    widget.appendChild(box);
+  }
+}
+
 // ---- Rendering: screens -----------------------------------------------
 
 const stage = document.getElementById("stage");
@@ -682,6 +834,7 @@ function render() {
 
   const isGameOver = uiPhase === "connected" && myView && myView.phase === "gameover";
   document.querySelector(".board-card").classList.toggle("wide", isGameOver);
+  if (isGameOver) maybeRecordGameResult();
 
   if (uiPhase !== "connected") return renderPreGame();
 
@@ -1232,3 +1385,4 @@ const urlRoom = new URLSearchParams(location.search).get("room");
 if (urlRoom) uiPhase = "joinForm";
 render();
 setupRulesExamples();
+if (AUTH_ENABLED) initAuth();

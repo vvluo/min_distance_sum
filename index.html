@@ -9,8 +9,11 @@
 <body>
   <div class="app">
     <header class="app-header">
-      <h1>Point41</h1>
-      <p class="subtitle">4 players &middot; 9 rounds &middot; lowest total wins</p>
+      <div class="app-header-text">
+        <h1>Point41</h1>
+        <p class="subtitle">4 players &middot; 9 rounds &middot; lowest total wins</p>
+      </div>
+      <div id="auth-widget"></div>
     </header>
 
     <div class="layout">
@@ -49,6 +52,7 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
