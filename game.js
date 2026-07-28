@@ -715,7 +715,14 @@ async function initAuth() {
 
 async function signUpWithEmail(email, password) {
   authBusy = true; authError = ""; renderAuthWidget();
-  const { error } = await sb.auth.signUp({ email, password });
+  // Explicitly pin the confirmation link's destination to wherever this page
+  // is actually being served from (works for GitHub Pages and local dev
+  // alike) — sidesteps a Supabase quirk where the dashboard's configured
+  // Site URL sometimes doesn't carry its path through to the redirect.
+  const { error } = await sb.auth.signUp({
+    email, password,
+    options: { emailRedirectTo: location.origin + location.pathname },
+  });
   authBusy = false;
   authError = error ? error.message : "Check your email to confirm your account, then sign in.";
   renderAuthWidget();
