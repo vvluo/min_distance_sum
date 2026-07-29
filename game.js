@@ -1373,16 +1373,27 @@ function showRuleExample(kind, container) {
 }
 
 function clearRuleExample(container) {
-  container.innerHTML = '<div class="rules-example-hint">Hover a rule above to see an example</div>';
+  container.innerHTML = '<div class="rules-example-hint">Tap a rule above to see an example</div>';
 }
 
+// Tap/click to toggle, rather than hover — hover has no equivalent on touch
+// devices, so a single interaction model that works identically on both
+// mouse and touch is simpler than maintaining two separate code paths.
 function setupRulesExamples() {
   const container = document.getElementById("rules-example");
   if (!container) return;
-  const items = document.querySelectorAll("#rules-list li[data-example]");
+  const items = [...document.querySelectorAll("#rules-list li[data-example]")];
+  let activeKind = null;
+
+  function setActive(kind) {
+    activeKind = kind;
+    items.forEach((li) => li.classList.toggle("active", li.dataset.example === kind));
+    if (kind) showRuleExample(kind, container);
+    else clearRuleExample(container);
+  }
+
   items.forEach((li) => {
-    li.addEventListener("mouseenter", () => showRuleExample(li.dataset.example, container));
-    li.addEventListener("mouseleave", () => clearRuleExample(container));
+    li.addEventListener("click", () => setActive(activeKind === li.dataset.example ? null : li.dataset.example));
   });
 }
 

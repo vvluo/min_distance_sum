@@ -133,14 +133,15 @@ body {
 }
 
 #rules-list li[data-example] {
-  cursor: default;
+  cursor: pointer;
   border-radius: 6px;
   padding: 2px 4px;
   margin: 0 -4px;
   transition: background 0.12s ease, color 0.12s ease;
 }
 
-#rules-list li[data-example]:hover {
+#rules-list li[data-example]:hover,
+#rules-list li[data-example].active {
   background: #f1f0ec;
   color: var(--ink);
 }
@@ -530,6 +531,25 @@ button.small {
 
 svg#board {
   display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 600px) {
+  .app {
+    padding: 16px 12px 40px;
+  }
+
+  .board-card {
+    padding: 14px;
+  }
+
+  /* A bit smaller than the full available width, not just clamped to fit —
+     a phone screen edge-to-edge board feels cramped. */
+  svg#board {
+    width: 92%;
+    margin: 0 auto;
+  }
 }
 
 .vertex {
