@@ -550,6 +550,27 @@ svg#board {
     width: 92%;
     margin: 0 auto;
   }
+
+  /* .review-board-slot is flex:0 0 auto (intentionally non-shrinking on
+     desktop, so it sits next to the round list at full board size) — on
+     narrow screens that same rule stops the percentage width above from
+     resolving against anything, so the board falls back to its raw 448px
+     intrinsic size and overflows. Stack the review panel and give the
+     board slot a definite 100% width so the percentage above can apply. */
+  .review-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .review-board-slot {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .review-rounds {
+    width: 100%;
+    max-height: none;
+  }
 }
 
 .vertex {

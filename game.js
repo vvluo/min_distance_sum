@@ -1181,6 +1181,7 @@ function buildReviewPanel(v) {
 
     const row = el("div", { class: "review-round-row" }, [dot, document.createTextNode(`Round ${h.round}`)]);
     row.addEventListener("mouseenter", () => showRound(idx));
+    row.addEventListener("click", () => showRound(idx));
     roundsWrap.appendChild(row);
   });
 
@@ -1213,7 +1214,7 @@ function renderGameOver() {
 
   if (v.history.length) {
     stage.appendChild(el("div", { class: "stage-title", text: "Round Review", style: "margin-top:16px" }));
-    stage.appendChild(el("div", { class: "stage-sub", text: "Hover a round to see how it played out." }));
+    stage.appendChild(el("div", { class: "stage-sub", text: "Hover or tap a round to see how it played out." }));
     stage.appendChild(buildReviewPanel(v));
   }
 
